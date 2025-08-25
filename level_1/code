@@ -1,0 +1,70 @@
+%% === PARAMETERS ===
+fs = 20000;           % Sampling frequency
+frameSize = 1024;     % Samples per frame
+noiseFrames = 50;     % Frames for initial noise estimation
+
+% Buffers
+mainAudio = [];
+filteredAudio = [];
+
+%% === DEVICE SETUP ===
+deviceReader = audioDeviceReader('Device','Primary Sound Capture Driver', ...
+    'SampleRate',fs,'SamplesPerFrame',frameSize);
+deviceWriter = audioDeviceWriter('Device','Headphones (Realtek(R) Audio)','SampleRate',fs);
+
+disp('Press any key to start recording...')
+pause; % Wait for key press
+
+%% === INITIAL NOISE ESTIMATION ===
+disp('Estimating noise from initial frames...')
+noiseSpec = zeros(frameSize,1);
+for i = 1:noiseFrames
+    frame = deviceReader();
+    mainAudio = [mainAudio; frame];
+    frameFFT = fft(frame);
+    noiseSpec = noiseSpec + abs(frameFFT);
+end
+noiseSpec = noiseSpec / noiseFrames;
+
+disp('Recording... Press any key to stop recording')
+recording = true;
+
+while recording
+    % Check for key press to stop
+    if kbhit % If a key is pressed, stop recording
+        recording = false;
+        break;
+    end
+    
+    % Capture frame
+    frame = deviceReader();
+    mainAudio = [mainAudio; frame];
+    
+    % Spectral subtraction
+    frameFFT = fft(frame);
+    mag = abs(frameFFT) - noiseSpec;
+    mag = max(mag,0);
+    phase = angle(frameFFT);
+    filteredFrame = real(ifft(mag .* exp(1i*phase)));
+    filteredAudio = [filteredAudio; filteredFrame];
+end
+
+disp('Recording stopped. Press any key to play filtered audio.')
+pause; % Wait for key press
+
+%% === PLAY FILTERED AUDIO ===
+disp('Playing filtered audio...')
+numFrames = floor(length(filteredAudio)/frameSize);
+for i = 1:numFrames
+    deviceWriter(filteredAudio((i-1)*frameSize+1 : i*frameSize));
+end
+
+%% === SAVE AUDIO ===
+audiowrite('main_audio.wav', mainAudio, fs);
+audiowrite('filtered_audio.wav', filteredAudio, fs);
+
+release(deviceReader);
+release(deviceWriter);
+
+disp(' Done.')
+
