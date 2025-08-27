@@ -1,70 +1,55 @@
-%% === PARAMETERS ===
-fs = 20000;           % Sampling frequency
-frameSize = 1024;     % Samples per frame
-noiseFrames = 50;     % Frames for initial noise estimation
 
-% Buffers
-mainAudio = [];
-filteredAudio = [];
+fs = 20000;
+frameSize = 1024;
+noiseFrames = 50;
+maxDuration = 10; 
+maxSamples = maxDuration * fs;
 
-%% === DEVICE SETUP ===
-deviceReader = audioDeviceReader('Device','Primary Sound Capture Driver', ...
-    'SampleRate',fs,'SamplesPerFrame',frameSize);
-deviceWriter = audioDeviceWriter('Device','Headphones (Realtek(R) Audio)','SampleRate',fs);
+mainAudio = zeros(maxSamples,1);
+filteredAudio = zeros(maxSamples,1);
 
-disp('Press any key to start recording...')
-pause; % Wait for key press
+deviceReader = audioDeviceReader('SampleRate', fs, 'SamplesPerFrame', frameSize);
 
-%% === INITIAL NOISE ESTIMATION ===
-disp('Estimating noise from initial frames...')
+disp('Start noise estimation, keep silent...');
 noiseSpec = zeros(frameSize,1);
 for i = 1:noiseFrames
     frame = deviceReader();
-    mainAudio = [mainAudio; frame];
     frameFFT = fft(frame);
     noiseSpec = noiseSpec + abs(frameFFT);
 end
 noiseSpec = noiseSpec / noiseFrames;
+disp('Noise estimation complete. Start speaking!');
 
-disp('Recording... Press any key to stop recording')
 recording = true;
+sampleIndex = 1;
 
-while recording
-    % Check for key press to stop
-    if kbhit % If a key is pressed, stop recording
-        recording = false;
-        break;
-    end
-    
-    % Capture frame
+while recording && (sampleIndex + frameSize -1) <= maxSamples
     frame = deviceReader();
-    mainAudio = [mainAudio; frame];
     
-    % Spectral subtraction
     frameFFT = fft(frame);
     mag = abs(frameFFT) - noiseSpec;
-    mag = max(mag,0);
+    mag = max(mag, 0);
     phase = angle(frameFFT);
     filteredFrame = real(ifft(mag .* exp(1i*phase)));
-    filteredAudio = [filteredAudio; filteredFrame];
+    
+    mainAudio(sampleIndex : sampleIndex+frameSize-1) = frame;
+    filteredAudio(sampleIndex : sampleIndex+frameSize-1) = filteredFrame;
+    
+    sampleIndex = sampleIndex + frameSize;
+    
+    if mod(sampleIndex, fs*5) == 1
+        str = input('Type K then Enter to stop or just Enter to continue: ', 's');
+        if strcmpi(str, 'K')
+            recording = false;
+            disp('Recording stopped.');
+        end
+    end
 end
 
-disp('Recording stopped. Press any key to play filtered audio.')
-pause; % Wait for key press
+mainAudio = mainAudio(1:sampleIndex-1);
+filteredAudio = filteredAudio(1:sampleIndex-1);
 
-%% === PLAY FILTERED AUDIO ===
-disp('Playing filtered audio...')
-numFrames = floor(length(filteredAudio)/frameSize);
-for i = 1:numFrames
-    deviceWriter(filteredAudio((i-1)*frameSize+1 : i*frameSize));
-end
-
-%% === SAVE AUDIO ===
 audiowrite('main_audio.wav', mainAudio, fs);
 audiowrite('filtered_audio.wav', filteredAudio, fs);
-
-release(deviceReader);
-release(deviceWriter);
-
-disp(' Done.')
+disp('Files saved: main_audio.wav and filtered_audio.wav');
 
