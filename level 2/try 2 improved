@@ -1,0 +1,89 @@
+fs = 20000;
+frameSize = 1024;
+noiseFrames = 400;
+maxDuration = 10;
+maxSamples = maxDuration * fs;
+
+mainAudio = zeros(maxSamples,1);
+filteredAudio = zeros(maxSamples,1);
+
+deviceReader = audioDeviceReader('SampleRate', fs, 'SamplesPerFrame', frameSize);
+
+% Mode Selection
+disp('Select noise environment mode:');
+disp('1. Room');
+disp('2. Hall');
+disp('3. Roadside');
+disp('4. Traffic');
+modeChoice = input('Enter mode number: ');
+
+switch modeChoice
+    case 1
+        modeName = 'Room';
+        modeFactor = 1.0;
+    case 2
+        modeName = 'Hall';
+        modeFactor = 1.5;
+    case 3
+        modeName = 'Roadside';
+        modeFactor = 2.0;
+    case 4
+        modeName = 'Traffic';
+        modeFactor = 3.0;
+    otherwise
+        disp('Invalid option. Defaulting to Room mode.');
+        modeName = 'Room';
+        modeFactor = 1.0;
+end
+
+disp(['Starting noise estimation for ', modeName, ' mode, keep silent...']);
+noiseSpec = zeros(frameSize,1);
+
+for i = 1:noiseFrames
+    frame = deviceReader();
+    frameFFT = fft(frame);
+    noiseSpec = noiseSpec + abs(frameFFT);
+end
+
+noiseSpec = (noiseSpec / noiseFrames) * modeFactor;
+disp('Noise estimation complete. Start speaking!');
+
+recording = true;
+sampleIndex = 1;
+
+reductionFactor = 0.7;   
+gainFloor = 0.15;       
+
+while recording && (sampleIndex + frameSize - 1) <= maxSamples
+    frame = deviceReader();
+    frameFFT = fft(frame);
+    
+    % Spectral subtraction with protection
+    origMag = abs(frameFFT);
+    mag = origMag - reductionFactor * noiseSpec;
+    mag = max(mag, gainFloor * origMag); 
+    
+    phase = angle(frameFFT);
+    filteredFrame = real(ifft(mag .* exp(1i * phase)));
+    
+    mainAudio(sampleIndex : sampleIndex+frameSize-1) = frame;
+    filteredAudio(sampleIndex : sampleIndex+frameSize-1) = filteredFrame;
+    
+    sampleIndex = sampleIndex + frameSize;
+    
+    if mod(sampleIndex, fs*5) == 1
+        str = input('Type K then Enter to stop ', 's');
+        if strcmpi(str, 'K')
+            recording = false;
+            disp('Recording stopped.');
+        end
+    end
+end
+
+mainAudio = mainAudio(1:sampleIndex-1);
+filteredAudio = filteredAudio(1:sampleIndex-1);
+
+audiowrite('main_audio.wav', mainAudio, fs);
+audiowrite('filtered_audio.wav', filteredAudio, fs);
+disp('Files saved');
+
